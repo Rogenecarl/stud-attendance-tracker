@@ -2,8 +2,10 @@ import sqlite3 from 'sqlite3'
 import { app } from 'electron'
 import path from 'path'
 import bcrypt from 'bcryptjs'
+import { seedDatabase } from './seeders/databaseSeeder'
 
-const dbPath = path.join(app.getPath('userData'), 'database.sqlite')
+// Change database path to store in project directory
+const dbPath = path.join(__dirname, '..', '..', 'database.sqlite')
 console.log('Database path:', dbPath)
 
 const db = new sqlite3.Database(dbPath, (err) => {
@@ -57,6 +59,11 @@ function initDatabase() {
       FOREIGN KEY (student_id) REFERENCES students (id)
     )
   `)
+
+  // Call the external seeder
+  seedDatabase(db).catch(error => {
+    console.error('Failed to seed database:', error)
+  })
 }
 
 export async function registerUser(userData) {

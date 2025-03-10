@@ -1,26 +1,30 @@
 import { useState, useEffect } from 'react'
 import { format, addMonths, subMonths, startOfMonth, endOfMonth, eachDayOfInterval } from 'date-fns'
-import { Bar, Doughnut } from 'react-chartjs-2'
+import { Line, Doughnut } from 'react-chartjs-2'
 import {
   Chart as ChartJS,
   CategoryScale,
   LinearScale,
-  BarElement,
+  PointElement,
+  LineElement,
   Title,
   Tooltip,
   Legend,
-  ArcElement
+  ArcElement,
+  Filler
 } from 'chart.js'
 
 // Register ChartJS components
 ChartJS.register(
   CategoryScale,
   LinearScale,
-  BarElement,
+  PointElement,
+  LineElement,
   Title,
   Tooltip,
   Legend,
-  ArcElement
+  ArcElement,
+  Filler
 )
 
 const Dashboard = () => {
@@ -98,33 +102,48 @@ const Dashboard = () => {
     }
   }
 
-  // Update chart data to include percentages
+  // Update chart data to use line chart
   const chartData = {
-    labels: attendanceData.map(data => format(new Date(data.date), 'd')).reverse(),
+    labels: attendanceData.map(data => format(new Date(data.date), 'MMM d')).reverse(),
     datasets: [
       {
         label: 'Present',
         data: attendanceData.map(data => data.presentPercentage).reverse(),
-        backgroundColor: 'rgba(34, 197, 94, 0.8)', // Green color
-        barPercentage: 0.6,
-        categoryPercentage: 0.8,
-        borderRadius: 6
+        borderColor: 'rgb(34, 197, 94)',
+        backgroundColor: 'rgba(34, 197, 94, 0.1)',
+        fill: true,
+        tension: 0.4,
+        pointRadius: 4,
+        pointHoverRadius: 6,
+        pointBackgroundColor: 'rgb(34, 197, 94)',
+        pointBorderColor: 'white',
+        pointBorderWidth: 2
       },
       {
         label: 'Late',
         data: attendanceData.map(data => data.latePercentage).reverse(),
-        backgroundColor: 'rgba(234, 179, 8, 0.8)', // Yellow color
-        barPercentage: 0.6,
-        categoryPercentage: 0.8,
-        borderRadius: 6
+        borderColor: 'rgb(234, 179, 8)',
+        backgroundColor: 'rgba(234, 179, 8, 0.1)',
+        fill: true,
+        tension: 0.4,
+        pointRadius: 4,
+        pointHoverRadius: 6,
+        pointBackgroundColor: 'rgb(234, 179, 8)',
+        pointBorderColor: 'white',
+        pointBorderWidth: 2
       },
       {
         label: 'Absent',
         data: attendanceData.map(data => data.absentPercentage).reverse(),
-        backgroundColor: 'rgba(239, 68, 68, 0.8)', // Red color
-        barPercentage: 0.6,
-        categoryPercentage: 0.8,
-        borderRadius: 6
+        borderColor: 'rgb(239, 68, 68)',
+        backgroundColor: 'rgba(239, 68, 68, 0.1)',
+        fill: true,
+        tension: 0.4,
+        pointRadius: 4,
+        pointHoverRadius: 6,
+        pointBackgroundColor: 'rgb(239, 68, 68)',
+        pointBorderColor: 'white',
+        pointBorderWidth: 2
       }
     ]
   }
@@ -132,10 +151,18 @@ const Dashboard = () => {
   const chartOptions = {
     responsive: true,
     maintainAspectRatio: false,
+    interaction: {
+      mode: 'index',
+      intersect: false,
+    },
     scales: {
       y: {
         beginAtZero: true,
         max: 100,
+        grid: {
+          color: 'rgba(243, 244, 246, 0.6)',
+          drawBorder: false
+        },
         ticks: {
           callback: value => `${value}%`,
           stepSize: 20,
@@ -144,10 +171,6 @@ const Dashboard = () => {
             family: "'Inter', sans-serif"
           },
           color: '#6B7280'
-        },
-        grid: {
-          color: 'rgba(243, 244, 246, 1)',
-          drawBorder: false
         }
       },
       x: {
@@ -155,6 +178,8 @@ const Dashboard = () => {
           display: false
         },
         ticks: {
+          maxRotation: 45,
+          minRotation: 45,
           font: {
             size: 12,
             family: "'Inter', sans-serif"
@@ -165,17 +190,18 @@ const Dashboard = () => {
     },
     plugins: {
       legend: {
-        position: 'bottom',
+        position: 'top',
+        align: 'end',
         labels: {
           boxWidth: 12,
+          usePointStyle: true,
+          pointStyle: 'circle',
           padding: 20,
           font: {
             size: 12,
             family: "'Inter', sans-serif",
             weight: '500'
-          },
-          usePointStyle: true,
-          pointStyle: 'circle'
+          }
         }
       },
       tooltip: {
@@ -194,6 +220,10 @@ const Dashboard = () => {
         padding: 12,
         borderColor: 'rgba(229, 231, 235, 1)',
         borderWidth: 1,
+        displayColors: true,
+        boxWidth: 8,
+        boxHeight: 8,
+        usePointStyle: true,
         callbacks: {
           label: function(context) {
             return `${context.dataset.label}: ${context.raw.toFixed(1)}%`
@@ -526,9 +556,14 @@ const Dashboard = () => {
         <div className="grid grid-cols-3 gap-6">
           {/* Attendance Chart */}
           <div className="col-span-2 bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
-            <h2 className="text-lg font-semibold text-gray-900 mb-6">Daily Attendance Overview</h2>
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-lg font-semibold text-gray-900">Daily Attendance Overview</h2>
+              <div className="text-sm text-gray-500">
+                Showing data for {format(selectedMonth, 'MMMM yyyy')}
+              </div>
+            </div>
             <div className="h-[400px]">
-              <Bar data={chartData} options={chartOptions} />
+              <Line data={chartData} options={chartOptions} />
             </div>
           </div>
 

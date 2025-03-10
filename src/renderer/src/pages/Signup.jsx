@@ -1,8 +1,10 @@
 import { Link, useNavigate } from 'react-router-dom'
 import { useState } from 'react'
+import { useAuth } from '../context/AuthContext'
 
 const Signup = () => {
   const navigate = useNavigate()
+  const { login } = useAuth()
   const [formData, setFormData] = useState({
     name: '',
     email: '',
@@ -28,11 +30,22 @@ const Signup = () => {
     }
 
     try {
-      const result = await window.electron.ipcRenderer.invoke('auth:register', formData)
-      if (result.success) {
-        navigate('/login')
+      const registerResult = await window.electron.ipcRenderer.invoke('auth:register', formData)
+      if (registerResult.success) {
+        // After successful registration, attempt to login
+        const loginResult = await window.electron.ipcRenderer.invoke('auth:login', {
+          email: formData.email,
+          password: formData.password
+        })
+        
+        if (loginResult.success) {
+          login(loginResult.data)
+          navigate('/dashboard', { replace: true })
+        } else {
+          setError(loginResult.error || 'Login failed after registration')
+        }
       } else {
-        setError(result.error)
+        setError(registerResult.error)
       }
     } catch (err) {
       setError('An error occurred during registration')
