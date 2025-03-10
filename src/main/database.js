@@ -52,7 +52,7 @@ function initDatabase() {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       student_id INTEGER,
       date DATE,
-      status BOOLEAN,
+      status TEXT CHECK(status IN ('P', 'L', 'A')),
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (student_id) REFERENCES students (id)
     )
@@ -251,7 +251,7 @@ export function resetDatabase() {
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           student_id INTEGER,
           date DATE,
-          status BOOLEAN,
+          status TEXT CHECK(status IN ('P', 'L', 'A')),
           created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
           FOREIGN KEY (student_id) REFERENCES students (id)
         )
@@ -298,7 +298,7 @@ export function markAttendance(attendanceData) {
     db.run(`
       INSERT OR REPLACE INTO attendance (student_id, date, status)
       VALUES (?, ?, ?)
-    `, [student_id, date, status ? 1 : 0], function(err) {
+    `, [student_id, date, status], function(err) {
       if (err) reject(err)
       else resolve({ id: this.lastID })
     })
@@ -334,44 +334,60 @@ export function getAttendanceByDateRange(startDate, endDate, section_id = null) 
 
 export function getAttendanceStats(month, year, section_id = null) {
   return new Promise((resolve, reject) => {
-    let query = `
+    let baseQuery = `
+      SELECT COUNT(*) as total_students
+      FROM students s
+      ${section_id ? 'WHERE s.section_id = ?' : ''}
+    `
+
+    let attendanceQuery = `
       SELECT 
-        COUNT(DISTINCT s.id) as total_students,
-        COUNT(DISTINCT CASE WHEN a.status = 1 THEN s.id END) as total_present,
-        COUNT(DISTINCT CASE WHEN a.status = 0 THEN s.id END) as total_absent,
         a.date,
-        COUNT(CASE WHEN a.status = 1 THEN 1 END) as present_count,
-        COUNT(CASE WHEN a.status = 0 THEN 1 END) as absent_count
+        COUNT(CASE WHEN a.status = 'P' THEN 1 END) as present_count,
+        COUNT(CASE WHEN a.status = 'L' THEN 1 END) as late_count,
+        COUNT(CASE WHEN a.status = 'A' THEN 1 END) as absent_count,
+        COUNT(DISTINCT CASE WHEN a.status = 'P' THEN s.id END) as total_present,
+        COUNT(DISTINCT CASE WHEN a.status = 'L' THEN s.id END) as total_late,
+        COUNT(DISTINCT CASE WHEN a.status = 'A' THEN s.id END) as total_absent
       FROM students s
       LEFT JOIN attendance a ON s.id = a.student_id
       WHERE strftime('%m-%Y', a.date) = ?
+      ${section_id ? 'AND s.section_id = ?' : ''}
+      GROUP BY a.date
     `
-    const params = [`${month}-${year}`]
 
-    if (section_id) {
-      query += ' AND s.section_id = ?'
-      params.push(section_id)
-    }
+    const params = section_id ? [section_id] : []
+    const attendanceParams = [`${month}-${year}`, ...(section_id ? [section_id] : [])]
 
-    query += ' GROUP BY a.date'
+    db.get(baseQuery, params, (err, totalResult) => {
+      if (err) {
+        reject(err)
+        return
+      }
 
-    db.all(query, params, (err, rows) => {
-      if (err) reject(err)
-      else {
+      db.all(attendanceQuery, attendanceParams, (err, rows) => {
+        if (err) {
+          reject(err)
+          return
+        }
+
         const stats = {
-          totalStudents: rows[0]?.total_students || 0,
+          totalStudents: totalResult.total_students,
           totalPresent: rows[0]?.total_present || 0,
+          totalLate: rows[0]?.total_late || 0,
           totalAbsent: rows[0]?.total_absent || 0
         }
+
         resolve({
           stats,
           attendanceData: rows.map(row => ({
             date: row.date,
             present: row.present_count,
+            late: row.late_count,
             absent: row.absent_count
           }))
         })
-      }
+      })
     })
   })
 } 

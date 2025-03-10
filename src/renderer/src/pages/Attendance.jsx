@@ -78,15 +78,13 @@ const Attendance = () => {
     }
   }
 
-  const handleAttendanceChange = async (studentId, day) => {
+  const handleAttendanceChange = async (studentId, day, newStatus) => {
     try {
       const date = new Date(
         selectedMonth.getFullYear(),
         selectedMonth.getMonth(),
         day
       ).toISOString().split('T')[0]
-
-      const newStatus = !attendance[studentId]?.[day]
 
       const result = await window.electron.ipcRenderer.invoke('attendance:mark', {
         student_id: studentId,
@@ -105,6 +103,19 @@ const Attendance = () => {
       }
     } catch (error) {
       console.error('Failed to mark attendance:', error)
+    }
+  }
+
+  const getStatusColor = (status) => {
+    switch (status) {
+      case 'P':
+        return 'text-green-600 bg-green-50 border-green-200'
+      case 'L':
+        return 'text-yellow-600 bg-yellow-50 border-yellow-200'
+      case 'A':
+        return 'text-red-600 bg-red-50 border-red-200'
+      default:
+        return 'text-gray-600 bg-gray-50 border-gray-200'
     }
   }
 
@@ -333,47 +344,74 @@ const Attendance = () => {
                   <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider whitespace-nowrap">
                     Name
                   </th>
-                  <th className="px-6 py-4 text-center text-xs font-semibold text-gray-600 uppercase tracking-wider w-8">
-                    Total
+                  <th className="px-6 py-4 text-center text-xs font-semibold text-gray-600 uppercase tracking-wider">
+                    P
+                  </th>
+                  <th className="px-6 py-4 text-center text-xs font-semibold text-gray-600 uppercase tracking-wider">
+                    L
+                  </th>
+                  <th className="px-6 py-4 text-center text-xs font-semibold text-gray-600 uppercase tracking-wider">
+                    A
                   </th>
                   {[...Array(daysInMonth)].map((_, i) => (
-                    <th key={i + 1} className="px-2 py-4 text-center text-xs font-semibold text-gray-600 uppercase tracking-wider w-8">
+                    <th key={i + 1} className="px-2 py-4 text-center text-xs font-semibold text-gray-600 uppercase tracking-wider w-20">
                       {i + 1}
                     </th>
                   ))}
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-200">
-                {filteredStudents.map((student, idx) => (
-                  <tr key={student.id} className={idx % 2 === 0 ? 'bg-gray-50' : 'bg-white'}>
-                    <td className="px-6 py-4 text-sm font-medium text-gray-900 whitespace-nowrap">
-                      {student.student_id}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="text-sm font-medium text-gray-900">{student.name}</div>
-                      <div className="text-xs text-gray-500">
-                        {sections.find(s => s.id === student.section_id)?.name || 'No Section'}
-                        {' '}
-                        {sections.find(s => s.id === student.section_id)?.schedule || ''}
-                      </div>
-                    </td>
-                    <td className="px-2 py-4 text-center">
-                      <span className="text-sm font-semibold text-gray-900">
-                        {Object.values(attendance[student.id] || {}).filter(Boolean).length}
-                      </span>
-                    </td>
-                    {[...Array(daysInMonth)].map((_, i) => (
-                      <td key={i + 1} className="px-2 py-4 text-center">
-                        <input
-                          type="checkbox"
-                          checked={attendance[student.id]?.[i + 1] || false}
-                          onChange={() => handleAttendanceChange(student.id, i + 1)}
-                          className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded transition-colors duration-200"
-                        />
+                {filteredStudents.map((student, idx) => {
+                  const studentAttendance = attendance[student.id] || {};
+                  const presentCount = Object.values(studentAttendance).filter(status => status === 'P').length;
+                  const lateCount = Object.values(studentAttendance).filter(status => status === 'L').length;
+                  const absentCount = Object.values(studentAttendance).filter(status => status === 'A').length;
+
+                  return (
+                    <tr key={student.id} className={idx % 2 === 0 ? 'bg-gray-50' : 'bg-white'}>
+                      <td className="px-6 py-4 text-sm font-medium text-gray-900 whitespace-nowrap">
+                        {student.student_id}
                       </td>
-                    ))}
-                  </tr>
-                ))}
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <div className="text-sm font-medium text-gray-900">{student.name}</div>
+                        <div className="text-xs text-gray-500">
+                          {sections.find(s => s.id === student.section_id)?.name || 'No Section'}
+                          {' '}
+                          {sections.find(s => s.id === student.section_id)?.schedule || ''}
+                        </div>
+                      </td>
+                      <td className="px-2 py-4 text-center">
+                        <span className="text-sm font-medium text-green-600">{presentCount}</span>
+                      </td>
+                      <td className="px-2 py-4 text-center">
+                        <span className="text-sm font-medium text-yellow-600">{lateCount}</span>
+                      </td>
+                      <td className="px-2 py-4 text-center">
+                        <span className="text-sm font-medium text-red-600">{absentCount}</span>
+                      </td>
+                      {[...Array(daysInMonth)].map((_, i) => {
+                        const day = i + 1;
+                        const status = studentAttendance[day] || '';
+                        const statusColor = getStatusColor(status);
+
+                        return (
+                          <td key={day} className="px-2 py-4 text-center">
+                            <select
+                              value={status}
+                              onChange={(e) => handleAttendanceChange(student.id, day, e.target.value)}
+                              className={`w-16 py-1 px-2 text-sm border rounded-lg cursor-pointer focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-colors duration-200 ${statusColor}`}
+                            >
+                              <option value="">-</option>
+                              <option value="P" className="text-green-600 bg-white">P</option>
+                              <option value="L" className="text-yellow-600 bg-white">L</option>
+                              <option value="A" className="text-red-600 bg-white">A</option>
+                            </select>
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

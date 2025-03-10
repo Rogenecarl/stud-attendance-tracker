@@ -71,24 +71,32 @@ const Dashboard = () => {
     }
   }
 
-  // Update chart data to use real data
+  // Update chart data to include late status
   const chartData = {
     labels: attendanceData.map(data => format(new Date(data.date), 'd')).reverse(),
     datasets: [
       {
-        label: 'Total Present',
+        label: 'Present',
         data: attendanceData.map(data => data.present).reverse(),
-        backgroundColor: 'rgba(99, 102, 241, 0.8)', // Indigo color
+        backgroundColor: 'rgba(34, 197, 94, 0.8)', // Green color
         barPercentage: 0.6,
-        categoryPercentage: 0.7,
+        categoryPercentage: 0.8,
         borderRadius: 6
       },
       {
-        label: 'Total Absent',
-        data: attendanceData.map(data => data.absent).reverse(),
-        backgroundColor: 'rgba(248, 113, 113, 0.8)', // Red color
+        label: 'Late',
+        data: attendanceData.map(data => data.late).reverse(),
+        backgroundColor: 'rgba(234, 179, 8, 0.8)', // Yellow color
         barPercentage: 0.6,
-        categoryPercentage: 0.7,
+        categoryPercentage: 0.8,
+        borderRadius: 6
+      },
+      {
+        label: 'Absent',
+        data: attendanceData.map(data => data.absent).reverse(),
+        backgroundColor: 'rgba(239, 68, 68, 0.8)', // Red color
+        barPercentage: 0.6,
+        categoryPercentage: 0.8,
         borderRadius: 6
       }
     ]
@@ -100,9 +108,8 @@ const Dashboard = () => {
     scales: {
       y: {
         beginAtZero: true,
-        max: 12,
         ticks: {
-          stepSize: 3,
+          stepSize: 2,
           font: {
             size: 12,
             family: "'Inter', sans-serif"
@@ -141,15 +148,86 @@ const Dashboard = () => {
           usePointStyle: true,
           pointStyle: 'circle'
         }
+      },
+      tooltip: {
+        backgroundColor: 'white',
+        titleColor: '#111827',
+        titleFont: {
+          size: 13,
+          family: "'Inter', sans-serif",
+          weight: '600'
+        },
+        bodyColor: '#6B7280',
+        bodyFont: {
+          size: 12,
+          family: "'Inter', sans-serif"
+        },
+        padding: 12,
+        borderColor: 'rgba(229, 231, 235, 1)',
+        borderWidth: 1
       }
     }
   }
 
-  // Calculate percentages
+  // Calculate percentages for donut chart
   const totalPresent = stats.totalPresent || 0
-  const totalStudents = stats.totalStudents || 0
-  const presentPercentage = totalStudents ? ((totalPresent / totalStudents) * 100).toFixed(1) : 0
-  const absentPercentage = (100 - presentPercentage).toFixed(1)
+  const totalLate = stats.totalLate || 0
+  const totalAbsent = stats.totalAbsent || 0
+  const total = totalPresent + totalLate + totalAbsent || 1
+
+  const presentPercentage = ((totalPresent / total) * 100).toFixed(1)
+  const latePercentage = ((totalLate / total) * 100).toFixed(1)
+  const absentPercentage = ((totalAbsent / total) * 100).toFixed(1)
+
+  // Update donut chart data
+  const donutData = {
+    labels: ['Present', 'Late', 'Absent'],
+    datasets: [
+      {
+        data: [presentPercentage, latePercentage, absentPercentage],
+        backgroundColor: [
+          'rgba(34, 197, 94, 0.8)', // Green for present
+          'rgba(234, 179, 8, 0.8)', // Yellow for late
+          'rgba(239, 68, 68, 0.8)', // Red for absent
+        ],
+        borderWidth: 0,
+        cutout: '85%'
+      }
+    ]
+  }
+
+  const donutOptions = {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+      legend: {
+        display: false
+      },
+      tooltip: {
+        enabled: true,
+        backgroundColor: 'white',
+        titleColor: '#111827',
+        titleFont: {
+          size: 13,
+          family: "'Inter', sans-serif",
+          weight: '600'
+        },
+        bodyColor: '#6B7280',
+        bodyFont: {
+          size: 12,
+          family: "'Inter', sans-serif"
+        },
+        padding: 12,
+        borderColor: 'rgba(229, 231, 235, 1)',
+        borderWidth: 1,
+        callbacks: {
+          label: function(context) {
+            return `${context.label}: ${context.raw}%`
+          }
+        }
+      }
+    }
+  }
 
   const previousMonth = () => {
     setCurrentMonth(subMonths(currentMonth, 1))
@@ -286,35 +364,6 @@ const Dashboard = () => {
     )
   }
 
-  // Add donut chart data
-  const donutData = {
-    labels: ['Present', 'Absent'],
-    datasets: [
-      {
-        data: [presentPercentage, absentPercentage],
-        backgroundColor: [
-          'rgba(99, 102, 241, 0.8)', // Indigo for present
-          'rgba(248, 113, 113, 0.8)', // Red for absent
-        ],
-        borderWidth: 0,
-        cutout: '85%'
-      }
-    ]
-  }
-
-  const donutOptions = {
-    responsive: true,
-    maintainAspectRatio: false,
-    plugins: {
-      legend: {
-        display: false
-      },
-      tooltip: {
-        enabled: false
-      }
-    }
-  }
-
   return (
     <div className="min-h-screen bg-gray-50 p-8">
       <div className="max-w-7xl mx-auto">
@@ -356,35 +405,30 @@ const Dashboard = () => {
         </div>
 
         {/* Stats Cards */}
-        <div className="grid grid-cols-4 gap-6 mb-8">
-          <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 transition-all duration-200 hover:shadow-md">
-            <div className="flex items-center gap-4">
-              <div className="bg-indigo-50 p-3 rounded-xl">
-                <svg className="w-8 h-8 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
-                </svg>
+        <div className="grid grid-cols-5 gap-6 mb-8">
+          {/* Total Students Card */}
+          <div className="col-span-2 bg-white rounded-2xl p-6 shadow-sm border border-gray-100 transition-all duration-200 hover:shadow-md">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-4">
+                <div className="bg-indigo-50 p-3 rounded-xl">
+                  <svg className="w-8 h-8 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
+                  </svg>
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-gray-500">Total Students</p>
+                  <h3 className="text-3xl font-bold text-gray-900 mt-1">{stats.totalStudents}</h3>
+                </div>
               </div>
-              <div>
-                <p className="text-sm font-medium text-gray-500">Total Sections</p>
-                <h3 className="text-2xl font-bold text-gray-900 mt-1">{totalSections}</h3>
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 transition-all duration-200 hover:shadow-md">
-            <div className="flex items-center gap-4">
-              <div className="bg-indigo-50 p-3 rounded-xl">
-                <svg className="w-8 h-8 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
-                </svg>
-              </div>
-              <div>
-                <p className="text-sm font-medium text-gray-500">Total Students</p>
-                <h3 className="text-2xl font-bold text-gray-900 mt-1">{stats.totalStudents}</h3>
+              <div className="bg-indigo-50 px-3 py-1 rounded-lg">
+                <span className="text-sm font-medium text-indigo-600">
+                  {totalSections} {totalSections === 1 ? 'Section' : 'Sections'}
+                </span>
               </div>
             </div>
           </div>
 
+          {/* Present Rate Card */}
           <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 transition-all duration-200 hover:shadow-md">
             <div className="flex items-center gap-4">
               <div className="bg-green-50 p-3 rounded-xl">
@@ -394,11 +438,33 @@ const Dashboard = () => {
               </div>
               <div>
                 <p className="text-sm font-medium text-gray-500">Present Rate</p>
-                <h3 className="text-2xl font-bold text-gray-900 mt-1">{presentPercentage}%</h3>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-2xl font-bold text-green-600 mt-1">{presentPercentage}%</h3>
+                  <span className="text-sm font-medium text-gray-500">({stats.totalPresent})</span>
+                </div>
               </div>
             </div>
           </div>
 
+          {/* Late Rate Card */}
+          <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 transition-all duration-200 hover:shadow-md">
+            <div className="flex items-center gap-4">
+              <div className="bg-yellow-50 p-3 rounded-xl">
+                <svg className="w-8 h-8 text-yellow-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+              </div>
+              <div>
+                <p className="text-sm font-medium text-gray-500">Late Rate</p>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-2xl font-bold text-yellow-600 mt-1">{latePercentage}%</h3>
+                  <span className="text-sm font-medium text-gray-500">({stats.totalLate})</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Absent Rate Card */}
           <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 transition-all duration-200 hover:shadow-md">
             <div className="flex items-center gap-4">
               <div className="bg-red-50 p-3 rounded-xl">
@@ -408,7 +474,10 @@ const Dashboard = () => {
               </div>
               <div>
                 <p className="text-sm font-medium text-gray-500">Absent Rate</p>
-                <h3 className="text-2xl font-bold text-gray-900 mt-1">{absentPercentage}%</h3>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-2xl font-bold text-red-600 mt-1">{absentPercentage}%</h3>
+                  <span className="text-sm font-medium text-gray-500">({stats.totalAbsent})</span>
+                </div>
               </div>
             </div>
           </div>
@@ -433,7 +502,7 @@ const Dashboard = () => {
               </div>
               {/* Center text */}
               <div className="absolute inset-0 flex flex-col items-center justify-center">
-                <div className="text-3xl font-bold text-indigo-600">
+                <div className="text-3xl font-bold text-green-600">
                   {presentPercentage}%
                 </div>
                 <div className="text-sm text-gray-500 font-medium">Present Rate</div>
@@ -443,10 +512,17 @@ const Dashboard = () => {
             <div className="mt-8 space-y-4">
               <div className="flex items-center justify-between px-4 py-3 bg-gray-50 rounded-xl">
                 <div className="flex items-center gap-3">
-                  <div className="w-3 h-3 rounded-full bg-indigo-500"></div>
+                  <div className="w-3 h-3 rounded-full bg-green-500"></div>
                   <span className="text-sm font-medium text-gray-700">Present</span>
                 </div>
                 <span className="text-sm font-semibold text-gray-900">{presentPercentage}%</span>
+              </div>
+              <div className="flex items-center justify-between px-4 py-3 bg-gray-50 rounded-xl">
+                <div className="flex items-center gap-3">
+                  <div className="w-3 h-3 rounded-full bg-yellow-500"></div>
+                  <span className="text-sm font-medium text-gray-700">Late</span>
+                </div>
+                <span className="text-sm font-semibold text-gray-900">{latePercentage}%</span>
               </div>
               <div className="flex items-center justify-between px-4 py-3 bg-gray-50 rounded-xl">
                 <div className="flex items-center gap-3">
