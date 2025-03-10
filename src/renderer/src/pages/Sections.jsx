@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Dialog, Transition } from '@headlessui/react'
 import { Fragment } from 'react'
+import Pagination from '../components/Pagination'
 
 const Sections = () => {
   const [sections, setSections] = useState([])
@@ -15,10 +16,16 @@ const Sections = () => {
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false)
   const [sectionToDelete, setSectionToDelete] = useState(null)
   const [successMessage, setSuccessMessage] = useState('')
+  const [currentPage, setCurrentPage] = useState(1)
+  const itemsPerPage = 20
 
   useEffect(() => {
     loadSections()
   }, [])
+
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [searchQuery])
 
   const loadSections = async () => {
     try {
@@ -83,6 +90,22 @@ const Sections = () => {
     } catch (error) {
       console.error('Failed to delete section:', error)
     }
+  }
+
+  const filteredSections = sections.filter(section =>
+    section.name.toLowerCase().includes(searchQuery.toLowerCase())
+  )
+
+  const paginatedSections = filteredSections.slice(
+    (currentPage - 1) * itemsPerPage,
+    currentPage * itemsPerPage
+  )
+
+  const totalPages = Math.max(1, Math.ceil(filteredSections.length / itemsPerPage))
+
+  const handlePageChange = (page) => {
+    setCurrentPage(page)
+    document.querySelector('.overflow-x-auto')?.scrollTo(0, 0)
   }
 
   return (
@@ -153,26 +176,23 @@ const Sections = () => {
 
         {/* Sections Table */}
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead>
-              <tr className="bg-gray-50">
-                <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
-                  Section Name
-                </th>
-                <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
-                  Schedule
-                </th>
-                <th className="px-6 py-4 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider">
-                  Actions
-                </th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-200">
-              {sections
-                .filter(section =>
-                  section.name.toLowerCase().includes(searchQuery.toLowerCase())
-                )
-                .map((section, idx) => (
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-gray-200">
+              <thead>
+                <tr className="bg-gray-50">
+                  <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
+                    Section Name
+                  </th>
+                  <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
+                    Schedule
+                  </th>
+                  <th className="px-6 py-4 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider">
+                    Actions
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-200">
+                {paginatedSections.map((section, idx) => (
                   <tr key={section.id} className={idx % 2 === 0 ? 'bg-gray-50' : 'bg-white'}>
                     <td className="px-6 py-4">
                       <div className="text-sm font-medium text-gray-900">{section.name}</div>
@@ -212,8 +232,16 @@ const Sections = () => {
                     </td>
                   </tr>
                 ))}
-            </tbody>
-          </table>
+              </tbody>
+            </table>
+          </div>
+          <Pagination
+            currentPage={currentPage}
+            totalPages={Math.max(1, Math.ceil(filteredSections.length / itemsPerPage))}
+            onPageChange={handlePageChange}
+            totalItems={filteredSections.length}
+            itemsPerPage={itemsPerPage}
+          />
         </div>
       </div>
 

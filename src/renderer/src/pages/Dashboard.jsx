@@ -29,13 +29,17 @@ const Dashboard = () => {
   const [sections, setSections] = useState([])
   const [stats, setStats] = useState({
     totalStudents: 0,
+    totalSections: 0,
     totalPresent: 0,
-    totalAbsent: 0
+    totalLate: 0,
+    totalAbsent: 0,
+    presentPercentage: 0,
+    latePercentage: 0,
+    absentPercentage: 0
   })
   const [attendanceData, setAttendanceData] = useState([])
   const [showCalendar, setShowCalendar] = useState(false)
   const [currentMonth, setCurrentMonth] = useState(new Date())
-  const [totalSections, setTotalSections] = useState(0)
 
   useEffect(() => {
     loadSections()
@@ -47,7 +51,6 @@ const Dashboard = () => {
       const result = await window.electron.ipcRenderer.invoke('sections:get')
       if (result.success) {
         setSections(result.data)
-        setTotalSections(result.data.length)
       }
     } catch (error) {
       console.error('Failed to load sections:', error)
@@ -56,6 +59,11 @@ const Dashboard = () => {
 
   const loadDashboardData = async () => {
     try {
+      // First, get the total counts directly
+      const sectionsResult = await window.electron.ipcRenderer.invoke('sections:get')
+      const studentsResult = await window.electron.ipcRenderer.invoke('students:get')
+      
+      // Then get the attendance stats
       const result = await window.electron.ipcRenderer.invoke('dashboard:getData', {
         month: format(selectedMonth, 'MM'),
         year: format(selectedMonth, 'yyyy'),
@@ -63,21 +71,40 @@ const Dashboard = () => {
       })
 
       if (result.success) {
-        setStats(result.data.stats)
-        setAttendanceData(result.data.attendanceData)
+        const totalStudents = studentsResult.success ? (
+          selectedSection ? 
+            studentsResult.data.filter(s => s.section_id === parseInt(selectedSection)).length :
+            studentsResult.data.length
+        ) : 0;
+
+        const totalSections = sectionsResult.success ? sectionsResult.data.length : 0;
+
+        console.log('Dashboard Data:', {
+          totalStudents,
+          totalSections,
+          studentsResult,
+          sectionsResult
+        });
+
+        setStats({
+          ...result.data.stats,
+          totalStudents,
+          totalSections
+        });
+        setAttendanceData(result.data.attendanceData);
       }
     } catch (error) {
       console.error('Failed to load dashboard data:', error)
     }
   }
 
-  // Update chart data to include late status
+  // Update chart data to include percentages
   const chartData = {
     labels: attendanceData.map(data => format(new Date(data.date), 'd')).reverse(),
     datasets: [
       {
         label: 'Present',
-        data: attendanceData.map(data => data.present).reverse(),
+        data: attendanceData.map(data => data.presentPercentage).reverse(),
         backgroundColor: 'rgba(34, 197, 94, 0.8)', // Green color
         barPercentage: 0.6,
         categoryPercentage: 0.8,
@@ -85,7 +112,7 @@ const Dashboard = () => {
       },
       {
         label: 'Late',
-        data: attendanceData.map(data => data.late).reverse(),
+        data: attendanceData.map(data => data.latePercentage).reverse(),
         backgroundColor: 'rgba(234, 179, 8, 0.8)', // Yellow color
         barPercentage: 0.6,
         categoryPercentage: 0.8,
@@ -93,7 +120,7 @@ const Dashboard = () => {
       },
       {
         label: 'Absent',
-        data: attendanceData.map(data => data.absent).reverse(),
+        data: attendanceData.map(data => data.absentPercentage).reverse(),
         backgroundColor: 'rgba(239, 68, 68, 0.8)', // Red color
         barPercentage: 0.6,
         categoryPercentage: 0.8,
@@ -108,8 +135,10 @@ const Dashboard = () => {
     scales: {
       y: {
         beginAtZero: true,
+        max: 100,
         ticks: {
-          stepSize: 2,
+          callback: value => `${value}%`,
+          stepSize: 20,
           font: {
             size: 12,
             family: "'Inter', sans-serif"
@@ -164,27 +193,26 @@ const Dashboard = () => {
         },
         padding: 12,
         borderColor: 'rgba(229, 231, 235, 1)',
-        borderWidth: 1
+        borderWidth: 1,
+        callbacks: {
+          label: function(context) {
+            return `${context.dataset.label}: ${context.raw.toFixed(1)}%`
+          }
+        }
       }
     }
   }
 
-  // Calculate percentages for donut chart
-  const totalPresent = stats.totalPresent || 0
-  const totalLate = stats.totalLate || 0
-  const totalAbsent = stats.totalAbsent || 0
-  const total = totalPresent + totalLate + totalAbsent || 1
-
-  const presentPercentage = ((totalPresent / total) * 100).toFixed(1)
-  const latePercentage = ((totalLate / total) * 100).toFixed(1)
-  const absentPercentage = ((totalAbsent / total) * 100).toFixed(1)
-
-  // Update donut chart data
+  // Update donut chart data with actual percentages
   const donutData = {
     labels: ['Present', 'Late', 'Absent'],
     datasets: [
       {
-        data: [presentPercentage, latePercentage, absentPercentage],
+        data: [
+          stats.presentPercentage || 0,
+          stats.latePercentage || 0,
+          stats.absentPercentage || 0
+        ],
         backgroundColor: [
           'rgba(34, 197, 94, 0.8)', // Green for present
           'rgba(234, 179, 8, 0.8)', // Yellow for late
@@ -407,8 +435,8 @@ const Dashboard = () => {
         {/* Stats Cards */}
         <div className="grid grid-cols-5 gap-6 mb-8">
           {/* Total Students Card */}
-          <div className="col-span-2 bg-white rounded-2xl p-6 shadow-sm border border-gray-100 transition-all duration-200 hover:shadow-md">
-            <div className="flex items-center justify-between">
+          <div className="col-span-2 bg-white rounded-2xl p-6 shadow-sm border border-gray-100 transition-all duration-200 hover:shadow-md relative overflow-hidden">
+            <div className="flex items-center justify-between relative z-10">
               <div className="flex items-center gap-4">
                 <div className="bg-indigo-50 p-3 rounded-xl">
                   <svg className="w-8 h-8 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -417,14 +445,28 @@ const Dashboard = () => {
                 </div>
                 <div>
                   <p className="text-sm font-medium text-gray-500">Total Students</p>
-                  <h3 className="text-3xl font-bold text-gray-900 mt-1">{stats.totalStudents}</h3>
+                  <div className="flex items-baseline gap-2">
+                    <h3 className="text-4xl font-bold text-gray-900 mt-1">{stats.totalStudents}</h3>
+                    <span className="text-sm font-medium text-gray-500">students enrolled</span>
+                  </div>
                 </div>
               </div>
-              <div className="bg-indigo-50 px-3 py-1 rounded-lg">
-                <span className="text-sm font-medium text-indigo-600">
-                  {totalSections} {totalSections === 1 ? 'Section' : 'Sections'}
-                </span>
+              <div className="flex flex-col items-end gap-2">
+                <div className="bg-indigo-50 px-3 py-1 rounded-lg">
+                  <span className="text-sm font-medium text-indigo-600">
+                    {stats.totalSections} {stats.totalSections === 1 ? 'Section' : 'Sections'}
+                  </span>
+                </div>
+                <p className="text-sm text-gray-500">
+                  {selectedSection ? 'Current Section' : 'All Sections'}
+                </p>
               </div>
+            </div>
+            {/* Decorative background */}
+            <div className="absolute right-0 bottom-0 opacity-5">
+              <svg className="w-48 h-48 text-indigo-600" fill="currentColor" viewBox="0 0 24 24">
+                <path d="M12 14c3.31 0 6-2.69 6-6s-2.69-6-6-6-6 2.69-6 6 2.69 6 6 6zm0 2c-4 0-12 2-12 6v2h24v-2c0-4-8-6-12-6z" />
+              </svg>
             </div>
           </div>
 
@@ -438,10 +480,9 @@ const Dashboard = () => {
               </div>
               <div>
                 <p className="text-sm font-medium text-gray-500">Present Rate</p>
-                <div className="flex items-center gap-2">
-                  <h3 className="text-2xl font-bold text-green-600 mt-1">{presentPercentage}%</h3>
-                  <span className="text-sm font-medium text-gray-500">({stats.totalPresent})</span>
-                </div>
+                <h3 className="text-2xl font-bold text-green-600 mt-1">
+                  {(stats.presentPercentage || 0).toFixed(1)}%
+                </h3>
               </div>
             </div>
           </div>
@@ -456,10 +497,9 @@ const Dashboard = () => {
               </div>
               <div>
                 <p className="text-sm font-medium text-gray-500">Late Rate</p>
-                <div className="flex items-center gap-2">
-                  <h3 className="text-2xl font-bold text-yellow-600 mt-1">{latePercentage}%</h3>
-                  <span className="text-sm font-medium text-gray-500">({stats.totalLate})</span>
-                </div>
+                <h3 className="text-2xl font-bold text-yellow-600 mt-1">
+                  {(stats.latePercentage || 0).toFixed(1)}%
+                </h3>
               </div>
             </div>
           </div>
@@ -474,10 +514,9 @@ const Dashboard = () => {
               </div>
               <div>
                 <p className="text-sm font-medium text-gray-500">Absent Rate</p>
-                <div className="flex items-center gap-2">
-                  <h3 className="text-2xl font-bold text-red-600 mt-1">{absentPercentage}%</h3>
-                  <span className="text-sm font-medium text-gray-500">({stats.totalAbsent})</span>
-                </div>
+                <h3 className="text-2xl font-bold text-red-600 mt-1">
+                  {(stats.absentPercentage || 0).toFixed(1)}%
+                </h3>
               </div>
             </div>
           </div>
@@ -503,7 +542,7 @@ const Dashboard = () => {
               {/* Center text */}
               <div className="absolute inset-0 flex flex-col items-center justify-center">
                 <div className="text-3xl font-bold text-green-600">
-                  {presentPercentage}%
+                  {(stats.presentPercentage || 0).toFixed(1)}%
                 </div>
                 <div className="text-sm text-gray-500 font-medium">Present Rate</div>
               </div>
@@ -515,21 +554,27 @@ const Dashboard = () => {
                   <div className="w-3 h-3 rounded-full bg-green-500"></div>
                   <span className="text-sm font-medium text-gray-700">Present</span>
                 </div>
-                <span className="text-sm font-semibold text-gray-900">{presentPercentage}%</span>
+                <span className="text-sm font-semibold text-gray-900">
+                  {(stats.presentPercentage || 0).toFixed(1)}%
+                </span>
               </div>
               <div className="flex items-center justify-between px-4 py-3 bg-gray-50 rounded-xl">
                 <div className="flex items-center gap-3">
                   <div className="w-3 h-3 rounded-full bg-yellow-500"></div>
                   <span className="text-sm font-medium text-gray-700">Late</span>
                 </div>
-                <span className="text-sm font-semibold text-gray-900">{latePercentage}%</span>
+                <span className="text-sm font-semibold text-gray-900">
+                  {(stats.latePercentage || 0).toFixed(1)}%
+                </span>
               </div>
               <div className="flex items-center justify-between px-4 py-3 bg-gray-50 rounded-xl">
                 <div className="flex items-center gap-3">
                   <div className="w-3 h-3 rounded-full bg-red-500"></div>
                   <span className="text-sm font-medium text-gray-700">Absent</span>
                 </div>
-                <span className="text-sm font-semibold text-gray-900">{absentPercentage}%</span>
+                <span className="text-sm font-semibold text-gray-900">
+                  {(stats.absentPercentage || 0).toFixed(1)}%
+                </span>
               </div>
             </div>
           </div>

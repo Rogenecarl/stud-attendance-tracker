@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Dialog, Transition } from '@headlessui/react'
 import { Fragment } from 'react'
+import Pagination from '../components/Pagination'
 
 const Students = () => {
   const [students, setStudents] = useState([])
@@ -17,11 +18,17 @@ const Students = () => {
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false)
   const [studentToDelete, setStudentToDelete] = useState(null)
   const [successMessage, setSuccessMessage] = useState('')
+  const [currentPage, setCurrentPage] = useState(1)
+  const itemsPerPage = 20
 
   useEffect(() => {
     loadStudents()
     loadSections()
   }, [])
+
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [searchQuery])
 
   const loadStudents = async () => {
     try {
@@ -100,6 +107,23 @@ const Students = () => {
     }
   }
 
+  const filteredStudents = students.filter(student =>
+    student.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    student.student_id.toLowerCase().includes(searchQuery.toLowerCase())
+  )
+
+  const paginatedStudents = filteredStudents.slice(
+    (currentPage - 1) * itemsPerPage,
+    currentPage * itemsPerPage
+  )
+
+  const totalPages = Math.max(1, Math.ceil(filteredStudents.length / itemsPerPage))
+
+  const handlePageChange = (page) => {
+    setCurrentPage(page)
+    document.querySelector('.overflow-x-auto')?.scrollTo(0, 0)
+  }
+
   return (
     <div className="min-h-screen bg-gray-50 p-8">
       <div className="max-w-7xl mx-auto">
@@ -165,30 +189,26 @@ const Students = () => {
 
         {/* Students Table */}
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead>
-              <tr className="bg-gray-50">
-                <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
-                  Student ID
-                </th>
-                <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
-                  Name
-                </th>
-                <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
-                  Section & Schedule
-                </th>
-                <th className="px-6 py-4 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider">
-                  Actions
-                </th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-200">
-              {students
-                .filter(student =>
-                  student.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                  student.student_id.toLowerCase().includes(searchQuery.toLowerCase())
-                )
-                .map((student, idx) => (
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-gray-200">
+              <thead>
+                <tr className="bg-gray-50">
+                  <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
+                    Student ID
+                  </th>
+                  <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
+                    Name
+                  </th>
+                  <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
+                    Section & Schedule
+                  </th>
+                  <th className="px-6 py-4 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider">
+                    Actions
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-200">
+                {paginatedStudents.map((student, idx) => (
                   <tr key={student.id} className={idx % 2 === 0 ? 'bg-gray-50' : 'bg-white'}>
                     <td className="px-6 py-4 text-sm font-medium text-gray-900">
                       {student.student_id}
@@ -238,8 +258,16 @@ const Students = () => {
                     </td>
                   </tr>
                 ))}
-            </tbody>
-          </table>
+              </tbody>
+            </table>
+          </div>
+          <Pagination
+            currentPage={currentPage}
+            totalPages={Math.max(1, Math.ceil(filteredStudents.length / itemsPerPage))}
+            onPageChange={handlePageChange}
+            totalItems={filteredStudents.length}
+            itemsPerPage={itemsPerPage}
+          />
         </div>
       </div>
 

@@ -268,39 +268,110 @@ export function getAttendance(month, year, section_id = null) {
   return new Promise((resolve, reject) => {
     let query = `
       SELECT 
-        a.*,
+        a.id,
+        a.student_id,
+        a.date,
+        a.status,
         s.name as student_name,
-        s.student_id,
-        s.section_id
-      FROM attendance a
-      JOIN students s ON a.student_id = s.id
-      WHERE strftime('%m-%Y', a.date) = ?
+        s.student_id as student_number,
+        sec.name as section_name,
+        sec.schedule as section_schedule
+      FROM students s
+      LEFT JOIN sections sec ON s.section_id = sec.id
+      LEFT JOIN attendance a ON 
+        a.student_id = s.id AND 
+        strftime('%Y-%m', a.date) = ?
+      WHERE 1=1
+      ${section_id ? 'AND s.section_id = ?' : ''}
+      ORDER BY s.name ASC, a.date ASC
     `
-    const params = [`${month}-${year}`]
 
-    if (section_id) {
-      query += ' AND s.section_id = ?'
-      params.push(section_id)
-    }
+    const params = [
+      `${year}-${month.padStart(2, '0')}`,
+      ...(section_id ? [section_id] : [])
+    ]
+
+    console.log('Executing attendance query:', { query, params })
 
     db.all(query, params, (err, rows) => {
-      if (err) reject(err)
-      else resolve(rows)
+      if (err) {
+        console.error('Error getting attendance:', err)
+        reject(err)
+      } else {
+        console.log('Retrieved attendance records:', rows.length)
+        resolve(rows)
+      }
     })
   })
 }
 
-// Update markAttendance to handle multiple records
+// Update markAttendance to handle attendance status
 export function markAttendance(attendanceData) {
   return new Promise((resolve, reject) => {
     const { student_id, date, status } = attendanceData
     
-    db.run(`
-      INSERT OR REPLACE INTO attendance (student_id, date, status)
-      VALUES (?, ?, ?)
-    `, [student_id, date, status], function(err) {
-      if (err) reject(err)
-      else resolve({ id: this.lastID })
+    console.log('Marking attendance:', { student_id, date, status })
+
+    // Validate status
+    if (!['P', 'L', 'A', ''].includes(status)) {
+      reject(new Error('Invalid attendance status'))
+      return
+    }
+
+    db.serialize(() => {
+      db.run('BEGIN TRANSACTION')
+
+      try {
+        if (status === '') {
+          // Delete the record if status is empty
+          db.run(
+            'DELETE FROM attendance WHERE student_id = ? AND date = ?',
+            [student_id, date],
+            function(err) {
+              if (err) {
+                db.run('ROLLBACK')
+                console.error('Error deleting attendance:', err)
+                reject(err)
+              } else {
+                db.run('COMMIT')
+                console.log('Attendance record deleted')
+                resolve({ success: true, id: null, action: 'deleted' })
+              }
+            }
+          )
+        } else {
+          // Insert or update the record with explicit date format
+          db.run(
+            `INSERT OR REPLACE INTO attendance (student_id, date, status)
+             VALUES (?, date(?), ?)`,
+            [student_id, date, status],
+            function(err) {
+              if (err) {
+                db.run('ROLLBACK')
+                console.error('Error marking attendance:', err)
+                reject(err)
+              } else {
+                db.run('COMMIT')
+                console.log('Attendance marked successfully:', {
+                  id: this.lastID,
+                  action: 'updated',
+                  student_id,
+                  date,
+                  status
+                })
+                resolve({
+                  success: true,
+                  id: this.lastID,
+                  action: 'updated'
+                })
+              }
+            }
+          )
+        }
+      } catch (error) {
+        db.run('ROLLBACK')
+        reject(error)
+      }
     })
   })
 }
@@ -334,60 +405,123 @@ export function getAttendanceByDateRange(startDate, endDate, section_id = null) 
 
 export function getAttendanceStats(month, year, section_id = null) {
   return new Promise((resolve, reject) => {
-    let baseQuery = `
-      SELECT COUNT(*) as total_students
-      FROM students s
-      ${section_id ? 'WHERE s.section_id = ?' : ''}
-    `
-
-    let attendanceQuery = `
+    // First, get the basic counts directly
+    const basicCountsQuery = `
       SELECT 
-        a.date,
-        COUNT(CASE WHEN a.status = 'P' THEN 1 END) as present_count,
-        COUNT(CASE WHEN a.status = 'L' THEN 1 END) as late_count,
-        COUNT(CASE WHEN a.status = 'A' THEN 1 END) as absent_count,
-        COUNT(DISTINCT CASE WHEN a.status = 'P' THEN s.id END) as total_present,
-        COUNT(DISTINCT CASE WHEN a.status = 'L' THEN s.id END) as total_late,
-        COUNT(DISTINCT CASE WHEN a.status = 'A' THEN s.id END) as total_absent
-      FROM students s
-      LEFT JOIN attendance a ON s.id = a.student_id
-      WHERE strftime('%m-%Y', a.date) = ?
-      ${section_id ? 'AND s.section_id = ?' : ''}
-      GROUP BY a.date
-    `
+        (SELECT COUNT(*) FROM students ${section_id ? 'WHERE section_id = ?' : ''}) as total_students,
+        (SELECT COUNT(*) FROM sections) as total_sections,
+        (
+          SELECT COUNT(*) 
+          FROM attendance a
+          JOIN students s ON a.student_id = s.id
+          WHERE strftime('%Y-%m', a.date) = ? 
+          AND a.status = 'P'
+          ${section_id ? 'AND s.section_id = ?' : ''}
+        ) as total_present,
+        (
+          SELECT COUNT(*) 
+          FROM attendance a
+          JOIN students s ON a.student_id = s.id
+          WHERE strftime('%Y-%m', a.date) = ? 
+          AND a.status = 'L'
+          ${section_id ? 'AND s.section_id = ?' : ''}
+        ) as total_late,
+        (
+          SELECT COUNT(*) 
+          FROM attendance a
+          JOIN students s ON a.student_id = s.id
+          WHERE strftime('%Y-%m', a.date) = ? 
+          AND a.status = 'A'
+          ${section_id ? 'AND s.section_id = ?' : ''}
+        ) as total_absent
+    `;
 
-    const params = section_id ? [section_id] : []
-    const attendanceParams = [`${month}-${year}`, ...(section_id ? [section_id] : [])]
+    const yearMonth = `${year}-${month.padStart(2, '0')}`;
+    const basicCountsParams = [
+      ...(section_id ? [section_id] : []),
+      yearMonth,
+      ...(section_id ? [section_id] : []),
+      yearMonth,
+      ...(section_id ? [section_id] : []),
+      yearMonth,
+      ...(section_id ? [section_id] : [])
+    ];
 
-    db.get(baseQuery, params, (err, totalResult) => {
+    db.get(basicCountsQuery, basicCountsParams, (err, basicCounts) => {
       if (err) {
-        reject(err)
-        return
+        console.error('Error getting basic counts:', err);
+        reject(err);
+        return;
       }
 
-      db.all(attendanceQuery, attendanceParams, (err, rows) => {
+      // Now get the daily attendance data
+      const dailyQuery = `
+        WITH RECURSIVE 
+        DateRange AS (
+          SELECT date(?, ?, '01') as date
+          UNION ALL
+          SELECT date(date, '+1 day')
+          FROM DateRange
+          WHERE date < date(?, ?, (SELECT (strftime('%d', date(?, ?, '+1 month', '-1 day')))))
+        )
+        SELECT 
+          d.date,
+          COUNT(DISTINCT CASE WHEN a.status = 'P' THEN s.id END) as present_count,
+          COUNT(DISTINCT CASE WHEN a.status = 'L' THEN s.id END) as late_count,
+          COUNT(DISTINCT CASE WHEN a.status = 'A' THEN s.id END) as absent_count
+        FROM DateRange d
+        CROSS JOIN students s
+        LEFT JOIN attendance a ON a.student_id = s.id AND date(a.date) = d.date
+        ${section_id ? 'WHERE s.section_id = ?' : ''}
+        GROUP BY d.date
+        ORDER BY d.date DESC
+      `;
+
+      const dailyParams = [
+        year, month.padStart(2, '0'),
+        year, month.padStart(2, '0'),
+        year, month.padStart(2, '0'),
+        ...(section_id ? [section_id] : [])
+      ];
+
+      db.all(dailyQuery, dailyParams, (err, rows) => {
         if (err) {
-          reject(err)
-          return
+          console.error('Error getting daily attendance:', err);
+          reject(err);
+          return;
         }
 
+        const totalStudents = basicCounts.total_students || 0;
+
         const stats = {
-          totalStudents: totalResult.total_students,
-          totalPresent: rows[0]?.total_present || 0,
-          totalLate: rows[0]?.total_late || 0,
-          totalAbsent: rows[0]?.total_absent || 0
-        }
+          totalStudents: totalStudents,
+          totalSections: basicCounts.total_sections || 0,
+          totalPresent: basicCounts.total_present || 0,
+          totalLate: basicCounts.total_late || 0,
+          totalAbsent: basicCounts.total_absent || 0,
+          presentPercentage: totalStudents > 0 ? (basicCounts.total_present / totalStudents) * 100 : 0,
+          latePercentage: totalStudents > 0 ? (basicCounts.total_late / totalStudents) * 100 : 0,
+          absentPercentage: totalStudents > 0 ? (basicCounts.total_absent / totalStudents) * 100 : 0
+        };
+
+        console.log('Calculated attendance stats:', stats);
 
         resolve({
           stats,
-          attendanceData: rows.map(row => ({
-            date: row.date,
-            present: row.present_count,
-            late: row.late_count,
-            absent: row.absent_count
-          }))
-        })
-      })
-    })
-  })
+          attendanceData: rows.map(row => {
+            const dailyTotal = totalStudents;
+            return {
+              date: row.date,
+              present: row.present_count,
+              late: row.late_count,
+              absent: row.absent_count,
+              presentPercentage: dailyTotal > 0 ? (row.present_count / dailyTotal) * 100 : 0,
+              latePercentage: dailyTotal > 0 ? (row.late_count / dailyTotal) * 100 : 0,
+              absentPercentage: dailyTotal > 0 ? (row.absent_count / dailyTotal) * 100 : 0
+            };
+          })
+        });
+      });
+    });
+  });
 } 

@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { format, addMonths, subMonths, startOfMonth, endOfMonth, eachDayOfInterval } from 'date-fns'
+import Pagination from '../components/Pagination'
 
 const Attendance = () => {
   const [selectedMonth, setSelectedMonth] = useState(new Date())
@@ -10,22 +11,39 @@ const Attendance = () => {
   const [showCalendar, setShowCalendar] = useState(false)
   const [currentMonth, setCurrentMonth] = useState(new Date())
   const [filteredStudents, setFilteredStudents] = useState([])
+  const [toast, setToast] = useState(null)
+  const [isLoading, setIsLoading] = useState(true)
+  const [currentPage, setCurrentPage] = useState(1)
+  const itemsPerPage = 20
 
   // Get number of days in selected month
   const daysInMonth = new Date(selectedMonth.getFullYear(), selectedMonth.getMonth() + 1, 0).getDate()
 
+  // Initial load
   useEffect(() => {
-    loadSections()
-    loadStudents()
+    const initializeData = async () => {
+      await loadSections()
+      await loadStudents()
+      setIsLoading(false)
+    }
+    initializeData()
   }, [])
 
+  // Handle filtered students
   useEffect(() => {
     filterStudents()
   }, [selectedSection, students])
 
+  // Load attendance when dependencies change
   useEffect(() => {
-    loadAttendance()
-  }, [selectedMonth, selectedSection])
+    const loadData = async () => {
+      if (!isLoading && filteredStudents.length > 0) {
+        console.log('Loading attendance data...')
+        await loadAttendance()
+      }
+    }
+    loadData()
+  }, [selectedMonth, filteredStudents, isLoading])
 
   const loadSections = async () => {
     try {
@@ -55,6 +73,13 @@ const Attendance = () => {
       const month = format(selectedMonth, 'MM')
       const year = format(selectedMonth, 'yyyy')
       
+      console.log('Loading attendance for:', {
+        month,
+        year,
+        section_id: selectedSection || null,
+        filteredStudents: filteredStudents.length
+      })
+
       const result = await window.electron.ipcRenderer.invoke('attendance:get', {
         month,
         year,
@@ -62,47 +87,103 @@ const Attendance = () => {
       })
 
       if (result.success) {
-        // Convert the attendance data to the format your component expects
+        // Initialize attendance map
         const attendanceMap = {}
+        
+        // Process attendance records
         result.data.forEach(record => {
+          if (!record.student_id) return // Skip if no student_id
+          
           if (!attendanceMap[record.student_id]) {
             attendanceMap[record.student_id] = {}
           }
-          const day = new Date(record.date).getDate()
-          attendanceMap[record.student_id][day] = record.status === 1
+          
+          if (record.date) {
+            const day = new Date(record.date).getDate()
+            attendanceMap[record.student_id][day] = record.status || ''
+          }
         })
+        
+        console.log('Setting attendance map:', attendanceMap)
         setAttendance(attendanceMap)
+      } else {
+        console.error('Failed to load attendance:', result.error)
+        showToast('Failed to load attendance data', 'error')
       }
     } catch (error) {
       console.error('Failed to load attendance:', error)
+      showToast('Failed to load attendance data', 'error')
     }
   }
 
   const handleAttendanceChange = async (studentId, day, newStatus) => {
     try {
-      const date = new Date(
-        selectedMonth.getFullYear(),
-        selectedMonth.getMonth(),
-        day
-      ).toISOString().split('T')[0]
+      const student = filteredStudents.find(s => s.id === studentId)
+      const date = format(
+        new Date(
+          selectedMonth.getFullYear(),
+          selectedMonth.getMonth(),
+          day
+        ),
+        'yyyy-MM-dd'
+      )
 
+      console.log('Marking attendance:', { studentId, date, newStatus })
+
+      // Save to database
       const result = await window.electron.ipcRenderer.invoke('attendance:mark', {
         student_id: studentId,
         date,
         status: newStatus
       })
 
-      if (result.success) {
-        setAttendance(prev => ({
-          ...prev,
-          [studentId]: {
-            ...prev[studentId],
-            [day]: newStatus
-          }
-        }))
+      if (!result.success) {
+        console.error('Failed to mark attendance:', result.error)
+        showToast('Failed to save attendance', 'error')
+        return
       }
+
+      // Update local state after successful save
+      setAttendance(prev => {
+        const newState = { ...prev }
+        if (!newState[studentId]) {
+          newState[studentId] = {}
+        }
+        
+        if (newStatus === '') {
+          delete newState[studentId][day]
+        } else {
+          newState[studentId][day] = newStatus
+        }
+        
+        return newState
+      })
+
+      // Show success toast message
+      if (newStatus) {
+        const statusMessages = {
+          'P': `Marked ${student.name} as Present`,
+          'L': `Marked ${student.name} as Late`,
+          'A': `Marked ${student.name} as Absent`
+        }
+        const statusTypes = {
+          'P': 'present',
+          'L': 'late',
+          'A': 'absent'
+        }
+        showToast(statusMessages[newStatus], statusTypes[newStatus])
+      } else {
+        showToast(`Cleared attendance for ${student.name}`, 'info')
+      }
+
+      // Reload attendance to ensure consistency
+      await loadAttendance()
+
     } catch (error) {
       console.error('Failed to mark attendance:', error)
+      showToast('Failed to save attendance', 'error')
+      // Reload attendance to ensure consistency
+      await loadAttendance()
     }
   }
 
@@ -143,6 +224,12 @@ const Attendance = () => {
     setCurrentMonth(addMonths(currentMonth, 1))
   }
 
+  const handleCalendarDateSelect = (date) => {
+    setSelectedMonth(date)
+    setCurrentMonth(date)
+    setShowCalendar(false)
+  }
+
   const Calendar = ({ isOpen, onClose }) => {
     if (!isOpen) return null
 
@@ -168,11 +255,6 @@ const Attendance = () => {
       date.setDate(end.getDate() + i + 1)
       return date
     })
-
-    const handleDateClick = (date) => {
-      setSelectedMonth(date)
-      onClose()
-    }
 
     return (
       <div className="absolute top-full left-0 mt-2 bg-white rounded-lg shadow-lg border border-gray-200 z-50 w-[280px]">
@@ -218,7 +300,7 @@ const Attendance = () => {
             {prevMonthDays.map(date => (
               <button
                 key={date.toISOString()}
-                onClick={() => handleDateClick(date)}
+                onClick={() => handleCalendarDateSelect(date)}
                 className="h-8 w-8 flex items-center justify-center text-xs text-gray-400"
               >
                 {date.getDate()}
@@ -233,7 +315,7 @@ const Attendance = () => {
               return (
                 <button
                   key={date.toISOString()}
-                  onClick={() => handleDateClick(date)}
+                  onClick={() => handleCalendarDateSelect(date)}
                   className={`h-8 w-8 flex items-center justify-center text-xs transition-colors
                     ${isToday ? 'text-blue-600 font-medium' : ''}
                     ${isSelected ? 'bg-blue-600 text-white rounded-full' : 'hover:bg-gray-100'}
@@ -248,7 +330,7 @@ const Attendance = () => {
             {nextMonthDays.map(date => (
               <button
                 key={date.toISOString()}
-                onClick={() => handleDateClick(date)}
+                onClick={() => handleCalendarDateSelect(date)}
                 className="h-8 w-8 flex items-center justify-center text-xs text-gray-400"
               >
                 {date.getDate()}
@@ -270,6 +352,97 @@ const Attendance = () => {
     )
   }
 
+  // Add this helper function to check if a date is in the past
+  const isDateInPast = (day) => {
+    const attendanceDate = new Date(
+      selectedMonth.getFullYear(),
+      selectedMonth.getMonth(),
+      day
+    )
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+    return attendanceDate < today
+  }
+
+  // Add this helper function to get status label for tooltips
+  const getStatusLabel = (status) => {
+    switch (status) {
+      case 'P':
+        return 'Present'
+      case 'L':
+        return 'Late'
+      case 'A':
+        return 'Absent'
+      default:
+        return 'Not marked'
+    }
+  }
+
+  // Toast notification component
+  const Toast = ({ message, type }) => {
+    const bgColor = {
+      present: 'bg-green-500',
+      late: 'bg-yellow-500',
+      absent: 'bg-red-500',
+      error: 'bg-gray-500'
+    }[type] || 'bg-gray-500'
+
+    const icon = {
+      present: (
+        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+        </svg>
+      ),
+      late: (
+        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+        </svg>
+      ),
+      absent: (
+        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" />
+        </svg>
+      ),
+      error: (
+        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+        </svg>
+      )
+    }[type]
+
+    return (
+      <div className="fixed bottom-4 right-4 flex items-center gap-2 px-4 py-2 rounded-lg text-white shadow-lg animate-fade-in-up">
+        <div className={`${bgColor} px-4 py-2 rounded-lg flex items-center gap-2`}>
+          {icon}
+          <span className="font-medium">{message}</span>
+        </div>
+      </div>
+    )
+  }
+
+  // Show toast message
+  const showToast = (message, type) => {
+    setToast({ message, type })
+    setTimeout(() => setToast(null), 3000) // Hide after 3 seconds
+  }
+
+  // Reset pagination when filters change
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [selectedSection, selectedMonth])
+
+  // Update pagination calculations
+  const paginatedStudents = filteredStudents.slice(
+    (currentPage - 1) * itemsPerPage,
+    currentPage * itemsPerPage
+  )
+
+  const handlePageChange = (page) => {
+    setCurrentPage(page)
+    // Scroll to top of table when page changes
+    document.querySelector('.overflow-x-auto')?.scrollTo(0, 0)
+  }
+
   return (
     <div className="min-h-screen bg-gray-50 p-8">
       <div className="max-w-7xl mx-auto">
@@ -277,7 +450,7 @@ const Attendance = () => {
         
         {/* Filters Section */}
         <div className="bg-white rounded-2xl p-6 mb-8 shadow-sm border border-gray-100">
-          <div className="grid grid-cols-3 gap-6">
+          <div className="grid grid-cols-2 gap-6">
             {/* Month Selector */}
             <div className="relative">
               <label className="block text-sm font-medium text-gray-700 mb-2">Month</label>
@@ -319,16 +492,6 @@ const Attendance = () => {
                 ))}
               </select>
             </div>
-
-            {/* Search Button */}
-            <div className="flex items-end">
-              <button 
-                onClick={loadAttendance}
-                className="w-full px-6 py-2.5 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 transition-colors duration-200 font-medium text-sm focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-              >
-                Update Attendance
-              </button>
-            </div>
           </div>
         </div>
 
@@ -361,7 +524,7 @@ const Attendance = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-200">
-                {filteredStudents.map((student, idx) => {
+                {paginatedStudents.map((student, idx) => {
                   const studentAttendance = attendance[student.id] || {};
                   const presentCount = Object.values(studentAttendance).filter(status => status === 'P').length;
                   const lateCount = Object.values(studentAttendance).filter(status => status === 'L').length;
@@ -393,19 +556,31 @@ const Attendance = () => {
                         const day = i + 1;
                         const status = studentAttendance[day] || '';
                         const statusColor = getStatusColor(status);
+                        const isPastDate = isDateInPast(day);
+                        const statusLabel = getStatusLabel(status);
 
                         return (
                           <td key={day} className="px-2 py-4 text-center">
-                            <select
-                              value={status}
-                              onChange={(e) => handleAttendanceChange(student.id, day, e.target.value)}
-                              className={`w-16 py-1 px-2 text-sm border rounded-lg cursor-pointer focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-colors duration-200 ${statusColor}`}
-                            >
-                              <option value="">-</option>
-                              <option value="P" className="text-green-600 bg-white">P</option>
-                              <option value="L" className="text-yellow-600 bg-white">L</option>
-                              <option value="A" className="text-red-600 bg-white">A</option>
-                            </select>
+                            {isPastDate ? (
+                              <div 
+                                className={`w-16 py-1.5 px-2 text-sm border rounded-lg ${statusColor} cursor-not-allowed`}
+                                title={statusLabel}
+                              >
+                                {status || '-'}
+                              </div>
+                            ) : (
+                              <select
+                                value={status}
+                                onChange={(e) => handleAttendanceChange(student.id, day, e.target.value)}
+                                className={`w-16 py-1.5 px-2 text-sm border rounded-lg cursor-pointer focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-colors duration-200 ${statusColor}`}
+                                title={statusLabel}
+                              >
+                                <option value="">-</option>
+                                <option value="P" className="text-green-600 bg-white">P</option>
+                                <option value="L" className="text-yellow-600 bg-white">L</option>
+                                <option value="A" className="text-red-600 bg-white">A</option>
+                              </select>
+                            )}
                           </td>
                         );
                       })}
@@ -415,11 +590,39 @@ const Attendance = () => {
               </tbody>
             </table>
           </div>
+          <Pagination
+            currentPage={currentPage}
+            totalPages={Math.max(1, Math.ceil(filteredStudents.length / itemsPerPage))}
+            onPageChange={handlePageChange}
+            totalItems={filteredStudents.length}
+            itemsPerPage={itemsPerPage}
+          />
         </div>
+
+        {/* Add the toast notification */}
+        {toast && <Toast message={toast.message} type={toast.type} />}
       </div>
     </div>
   )
 }
+
+// Add these styles to your CSS or Tailwind config
+const styles = `
+@keyframes fade-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(1rem);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in-up {
+  animation: fade-in-up 0.3s ease-out;
+}
+`
 
 export default Attendance
 
