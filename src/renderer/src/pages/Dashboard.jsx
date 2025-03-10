@@ -1,5 +1,18 @@
 import { useState, useEffect } from 'react'
-import { format, addMonths, subMonths, startOfMonth, endOfMonth, eachDayOfInterval } from 'date-fns'
+import { 
+  format, 
+  addMonths, 
+  subMonths, 
+  startOfMonth, 
+  endOfMonth, 
+  eachDayOfInterval,
+  startOfWeek,
+  endOfWeek,
+  eachWeekOfInterval,
+  addWeeks,
+  getWeek,
+  isSameWeek
+} from 'date-fns'
 import { Line, Doughnut } from 'react-chartjs-2'
 import {
   Chart as ChartJS,
@@ -29,6 +42,7 @@ ChartJS.register(
 
 const Dashboard = () => {
   const [selectedMonth, setSelectedMonth] = useState(new Date())
+  const [selectedWeek, setSelectedWeek] = useState(null)
   const [selectedSection, setSelectedSection] = useState('')
   const [sections, setSections] = useState([])
   const [stats, setStats] = useState({
@@ -45,10 +59,79 @@ const Dashboard = () => {
   const [showCalendar, setShowCalendar] = useState(false)
   const [currentMonth, setCurrentMonth] = useState(new Date())
 
+  // Get weeks for the selected month
+  const getWeeksInMonth = () => {
+    const start = startOfMonth(selectedMonth)
+    const end = endOfMonth(selectedMonth)
+    
+    return eachWeekOfInterval(
+      { start, end },
+      { weekStartsOn: 1 } // Start week on Monday
+    ).map(weekStart => {
+      const weekEnd = endOfWeek(weekStart, { weekStartsOn: 1 })
+      return {
+        start: weekStart,
+        end: weekEnd,
+        label: `Week ${getWeek(weekStart, { weekStartsOn: 1 }) - getWeek(start, { weekStartsOn: 1 }) + 1}`
+      }
+    })
+  }
+
+  // Filter attendance data by selected week
+  const getFilteredAttendanceData = () => {
+    if (!selectedWeek) return attendanceData
+
+    return attendanceData.filter(data => {
+      const date = new Date(data.date)
+      return isSameWeek(date, selectedWeek.start, { weekStartsOn: 1 })
+    })
+  }
+
+  // Get attendance data organized by weekday
+  const getWeekdayData = () => {
+    const weekData = {
+      Monday: { P: 0, L: 0, A: 0, total: 0 },
+      Tuesday: { P: 0, L: 0, A: 0, total: 0 },
+      Wednesday: { P: 0, L: 0, A: 0, total: 0 },
+      Thursday: { P: 0, L: 0, A: 0, total: 0 },
+      Friday: { P: 0, L: 0, A: 0, total: 0 },
+      Saturday: { P: 0, L: 0, A: 0, total: 0 },
+      Sunday: { P: 0, L: 0, A: 0, total: 0 }
+    }
+
+    const filteredData = getFilteredAttendanceData()
+    
+    // Group data by date first to handle multiple entries per day
+    const groupedByDate = filteredData.reduce((acc, data) => {
+      const date = new Date(data.date)
+      const dayName = format(date, 'EEEE')
+      
+      if (!acc[dayName]) {
+        acc[dayName] = { P: 0, L: 0, A: 0, total: 0 }
+      }
+      
+      // Count each status type
+      if (data.status === 'P') acc[dayName].P++
+      else if (data.status === 'L') acc[dayName].L++
+      else if (data.status === 'A') acc[dayName].A++
+      
+      acc[dayName].total++
+      return acc
+    }, {})
+
+    // Fill in the weekData with the grouped data
+    Object.entries(groupedByDate).forEach(([day, data]) => {
+      weekData[day] = data
+    })
+
+    console.log('Processed week data:', weekData)
+    return weekData
+  }
+
   useEffect(() => {
     loadSections()
     loadDashboardData()
-  }, [selectedMonth, selectedSection])
+  }, [selectedMonth, selectedSection, selectedWeek])
 
   const loadSections = async () => {
     try {
@@ -67,11 +150,13 @@ const Dashboard = () => {
       const sectionsResult = await window.electron.ipcRenderer.invoke('sections:get')
       const studentsResult = await window.electron.ipcRenderer.invoke('students:get')
       
-      // Then get the attendance stats
+      // Then get the attendance stats with the selected week if applicable
       const result = await window.electron.ipcRenderer.invoke('dashboard:getData', {
         month: format(selectedMonth, 'MM'),
         year: format(selectedMonth, 'yyyy'),
-        section_id: selectedSection
+        section_id: selectedSection,
+        week_start: selectedWeek ? format(selectedWeek.start, 'yyyy-MM-dd') : null,
+        week_end: selectedWeek ? format(selectedWeek.end, 'yyyy-MM-dd') : null
       })
 
       if (result.success) {
@@ -84,10 +169,10 @@ const Dashboard = () => {
         const totalSections = sectionsResult.success ? sectionsResult.data.length : 0;
 
         console.log('Dashboard Data:', {
+          attendanceData: result.data.attendanceData,
+          stats: result.data.stats,
           totalStudents,
-          totalSections,
-          studentsResult,
-          sectionsResult
+          totalSections
         });
 
         setStats({
@@ -102,48 +187,63 @@ const Dashboard = () => {
     }
   }
 
-  // Update chart data to use line chart
+  // Update chart data to show daily percentages with proper trend lines
   const chartData = {
-    labels: attendanceData.map(data => format(new Date(data.date), 'MMM d')).reverse(),
+    labels: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'],
     datasets: [
       {
         label: 'Present',
-        data: attendanceData.map(data => data.presentPercentage).reverse(),
+        data: Object.values(getWeekdayData()).map(day => 
+          day.total > 0 ? (day.P / day.total) * 100 : 0
+        ),
         borderColor: 'rgb(34, 197, 94)',
         backgroundColor: 'rgba(34, 197, 94, 0.1)',
-        fill: true,
-        tension: 0.4,
-        pointRadius: 4,
-        pointHoverRadius: 6,
+        fill: false,
+        tension: 0.3,
+        pointRadius: 5,
+        pointHoverRadius: 7,
         pointBackgroundColor: 'rgb(34, 197, 94)',
         pointBorderColor: 'white',
-        pointBorderWidth: 2
+        pointBorderWidth: 2,
+        borderWidth: 3,
+        order: 1,
+        spanGaps: true
       },
       {
         label: 'Late',
-        data: attendanceData.map(data => data.latePercentage).reverse(),
+        data: Object.values(getWeekdayData()).map(day => 
+          day.total > 0 ? (day.L / day.total) * 100 : 0
+        ),
         borderColor: 'rgb(234, 179, 8)',
         backgroundColor: 'rgba(234, 179, 8, 0.1)',
-        fill: true,
-        tension: 0.4,
-        pointRadius: 4,
-        pointHoverRadius: 6,
+        fill: false,
+        tension: 0.3,
+        pointRadius: 5,
+        pointHoverRadius: 7,
         pointBackgroundColor: 'rgb(234, 179, 8)',
         pointBorderColor: 'white',
-        pointBorderWidth: 2
+        pointBorderWidth: 2,
+        borderWidth: 3,
+        order: 2,
+        spanGaps: true
       },
       {
         label: 'Absent',
-        data: attendanceData.map(data => data.absentPercentage).reverse(),
+        data: Object.values(getWeekdayData()).map(day => 
+          day.total > 0 ? (day.A / day.total) * 100 : 0
+        ),
         borderColor: 'rgb(239, 68, 68)',
         backgroundColor: 'rgba(239, 68, 68, 0.1)',
-        fill: true,
-        tension: 0.4,
-        pointRadius: 4,
-        pointHoverRadius: 6,
+        fill: false,
+        tension: 0.3,
+        pointRadius: 5,
+        pointHoverRadius: 7,
         pointBackgroundColor: 'rgb(239, 68, 68)',
         pointBorderColor: 'white',
-        pointBorderWidth: 2
+        pointBorderWidth: 2,
+        borderWidth: 3,
+        order: 3,
+        spanGaps: true
       }
     ]
   }
@@ -161,7 +261,8 @@ const Dashboard = () => {
         max: 100,
         grid: {
           color: 'rgba(243, 244, 246, 0.6)',
-          drawBorder: false
+          drawBorder: false,
+          drawTicks: true
         },
         ticks: {
           callback: value => `${value}%`,
@@ -171,15 +272,25 @@ const Dashboard = () => {
             family: "'Inter', sans-serif"
           },
           color: '#6B7280'
+        },
+        title: {
+          display: true,
+          text: 'Percentage of Students',
+          font: {
+            size: 12,
+            family: "'Inter', sans-serif",
+            weight: '500'
+          },
+          color: '#6B7280'
         }
       },
       x: {
         grid: {
-          display: false
+          display: false,
+          drawBorder: true,
+          drawTicks: true
         },
         ticks: {
-          maxRotation: 45,
-          minRotation: 45,
           font: {
             size: 12,
             family: "'Inter', sans-serif"
@@ -225,8 +336,33 @@ const Dashboard = () => {
         boxHeight: 8,
         usePointStyle: true,
         callbacks: {
+          title: function(context) {
+            if (!context || !context[0]) return '';
+            return context[0].label || '';
+          },
           label: function(context) {
-            return `${context.dataset.label}: ${context.raw.toFixed(1)}%`
+            if (!context || context.raw === undefined) return '';
+            
+            const weekData = getWeekdayData();
+            const dayData = weekData[context.raw.label || context.label] || { P: 0, L: 0, A: 0, total: 0 };
+            const value = context.raw;
+            let count = 0;
+            
+            switch(context.dataset.label) {
+              case 'Present':
+                count = dayData.P;
+                break;
+              case 'Late':
+                count = dayData.L;
+                break;
+              case 'Absent':
+                count = dayData.A;
+                break;
+              default:
+                count = 0;
+            }
+            
+            return `${context.dataset.label}: ${count} students (${value.toFixed(1)}%)`;
           }
         }
       }
@@ -446,6 +582,31 @@ const Dashboard = () => {
               />
             </div>
 
+            {/* Week Selector */}
+            <select
+              value={selectedWeek ? `${format(selectedWeek.start, 'yyyy-MM-dd')}` : ''}
+              onChange={(e) => {
+                if (e.target.value === '') {
+                  setSelectedWeek(null)
+                } else {
+                  const weekStart = new Date(e.target.value)
+                  const weekEnd = endOfWeek(weekStart, { weekStartsOn: 1 })
+                  setSelectedWeek({ start: weekStart, end: weekEnd })
+                }
+              }}
+              className="bg-white px-4 py-2.5 rounded-xl border border-gray-200 shadow-sm text-sm font-medium text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+            >
+              <option value="">All Weeks</option>
+              {getWeeksInMonth().map((week, index) => (
+                <option 
+                  key={format(week.start, 'yyyy-MM-dd')} 
+                  value={format(week.start, 'yyyy-MM-dd')}
+                >
+                  {week.label} ({format(week.start, 'MMM d')} - {format(week.end, 'MMM d')})
+                </option>
+              ))}
+            </select>
+
             {/* Section Selector */}
             <select
               value={selectedSection}
@@ -559,11 +720,39 @@ const Dashboard = () => {
             <div className="flex items-center justify-between mb-6">
               <h2 className="text-lg font-semibold text-gray-900">Daily Attendance Overview</h2>
               <div className="text-sm text-gray-500">
-                Showing data for {format(selectedMonth, 'MMMM yyyy')}
+                {selectedWeek 
+                  ? `${format(selectedWeek.start, 'MMM d')} - ${format(selectedWeek.end, 'MMM d')}`
+                  : `Showing data for ${format(selectedMonth, 'MMMM yyyy')}`
+                }
               </div>
             </div>
             <div className="h-[400px]">
               <Line data={chartData} options={chartOptions} />
+            </div>
+            {/* Daily Summary Table */}
+            <div className="mt-6 overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-gray-200">
+                    <th className="py-2 px-4 text-left font-medium text-gray-500">Day</th>
+                    <th className="py-2 px-4 text-center font-medium text-gray-500">Present</th>
+                    <th className="py-2 px-4 text-center font-medium text-gray-500">Late</th>
+                    <th className="py-2 px-4 text-center font-medium text-gray-500">Absent</th>
+                    <th className="py-2 px-4 text-center font-medium text-gray-500">Total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {Object.entries(getWeekdayData()).map(([day, data]) => (
+                    <tr key={day} className="border-b border-gray-100 hover:bg-gray-50">
+                      <td className="py-2 px-4 font-medium text-gray-900">{day}</td>
+                      <td className="py-2 px-4 text-center text-green-600">{data.P}</td>
+                      <td className="py-2 px-4 text-center text-yellow-600">{data.L}</td>
+                      <td className="py-2 px-4 text-center text-red-600">{data.A}</td>
+                      <td className="py-2 px-4 text-center font-medium text-gray-900">{data.total}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           </div>
 
