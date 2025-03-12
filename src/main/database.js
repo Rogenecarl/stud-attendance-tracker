@@ -414,43 +414,53 @@ export function getAttendanceStats(month, year, section_id = null) {
   return new Promise((resolve, reject) => {
     // First, get the basic counts directly
     const basicCountsQuery = `
+      WITH DailyAttendance AS (
+        SELECT 
+          a.date,
+          s.section_id,
+          COUNT(DISTINCT CASE WHEN a.status = 'P' THEN s.id END) as present_count,
+          COUNT(DISTINCT CASE WHEN a.status = 'L' THEN s.id END) as late_count,
+          COUNT(DISTINCT CASE WHEN a.status = 'A' THEN s.id END) as absent_count,
+          COUNT(DISTINCT s.id) as total_students
+        FROM students s
+        LEFT JOIN attendance a ON 
+          a.student_id = s.id AND 
+          strftime('%Y-%m', a.date) = ?
+        WHERE 1=1 ${section_id ? 'AND s.section_id = ?' : ''}
+        GROUP BY a.date, s.section_id
+      ),
+      AttendanceSummary AS (
+        SELECT 
+          s.id as student_id,
+          MAX(CASE WHEN a.status = 'P' THEN 1 ELSE 0 END) as was_present,
+          MAX(CASE WHEN a.status = 'L' THEN 1 ELSE 0 END) as was_late,
+          MAX(CASE WHEN a.status = 'A' THEN 1 ELSE 0 END) as was_absent
+        FROM students s
+        LEFT JOIN attendance a ON 
+          a.student_id = s.id AND 
+          strftime('%Y-%m', a.date) = ?
+        WHERE 1=1 ${section_id ? 'AND s.section_id = ?' : ''}
+        GROUP BY s.id
+      )
       SELECT 
         (SELECT COUNT(*) FROM students ${section_id ? 'WHERE section_id = ?' : ''}) as total_students,
         (SELECT COUNT(*) FROM sections) as total_sections,
-        (
-          SELECT COUNT(*) 
-          FROM attendance a
-          JOIN students s ON a.student_id = s.id
-          WHERE strftime('%Y-%m', a.date) = ? 
-          AND a.status = 'P'
-          ${section_id ? 'AND s.section_id = ?' : ''}
-        ) as total_present,
-        (
-          SELECT COUNT(*) 
-          FROM attendance a
-          JOIN students s ON a.student_id = s.id
-          WHERE strftime('%Y-%m', a.date) = ? 
-          AND a.status = 'L'
-          ${section_id ? 'AND s.section_id = ?' : ''}
-        ) as total_late,
-        (
-          SELECT COUNT(*) 
-          FROM attendance a
-          JOIN students s ON a.student_id = s.id
-          WHERE strftime('%Y-%m', a.date) = ? 
-          AND a.status = 'A'
-          ${section_id ? 'AND s.section_id = ?' : ''}
-        ) as total_absent
+        COALESCE(SUM(present_count), 0) as total_present_daily,
+        COALESCE(SUM(late_count), 0) as total_late_daily,
+        COALESCE(SUM(absent_count), 0) as total_absent_daily,
+        COUNT(DISTINCT date) as total_days,
+        (SELECT COUNT(*) FROM AttendanceSummary WHERE was_present = 1) as total_present,
+        (SELECT COUNT(*) FROM AttendanceSummary WHERE was_late = 1) as total_late,
+        (SELECT COUNT(*) FROM AttendanceSummary WHERE was_absent = 1) as total_absent
+      FROM DailyAttendance
     `;
 
     const yearMonth = `${year}-${month.padStart(2, '0')}`;
     const basicCountsParams = [
-      ...(section_id ? [section_id] : []),
       yearMonth,
       ...(section_id ? [section_id] : []),
       yearMonth,
       ...(section_id ? [section_id] : []),
-      yearMonth,
       ...(section_id ? [section_id] : [])
     ];
 
@@ -499,17 +509,36 @@ export function getAttendanceStats(month, year, section_id = null) {
         }
 
         const totalStudents = basicCounts.total_students || 0;
+        const totalDays = basicCounts.total_days || 0;
 
-        const stats = {
-          totalStudents: totalStudents,
-          totalSections: basicCounts.total_sections || 0,
-          totalPresent: basicCounts.total_present || 0,
-          totalLate: basicCounts.total_late || 0,
-          totalAbsent: basicCounts.total_absent || 0,
-          presentPercentage: totalStudents > 0 ? (basicCounts.total_present / totalStudents) * 100 : 0,
-          latePercentage: totalStudents > 0 ? (basicCounts.total_late / totalStudents) * 100 : 0,
-          absentPercentage: totalStudents > 0 ? (basicCounts.total_absent / totalStudents) * 100 : 0
-        };
+        // Calculate percentages differently based on whether a section is selected
+        let stats;
+        if (section_id) {
+          // For individual sections, calculate based on total possible attendance
+          const totalPossibleAttendance = totalStudents * totalDays;
+          stats = {
+            totalStudents: totalStudents,
+            totalSections: basicCounts.total_sections || 0,
+            totalPresent: basicCounts.total_present_daily || 0,
+            totalLate: basicCounts.total_late_daily || 0,
+            totalAbsent: basicCounts.total_absent_daily || 0,
+            presentPercentage: totalPossibleAttendance > 0 ? (basicCounts.total_present_daily / totalPossibleAttendance) * 100 : 0,
+            latePercentage: totalPossibleAttendance > 0 ? (basicCounts.total_late_daily / totalPossibleAttendance) * 100 : 0,
+            absentPercentage: totalPossibleAttendance > 0 ? (basicCounts.total_absent_daily / totalPossibleAttendance) * 100 : 0
+          };
+        } else {
+          // For all sections, calculate based on total students who attended at least once
+          stats = {
+            totalStudents: totalStudents,
+            totalSections: basicCounts.total_sections || 0,
+            totalPresent: basicCounts.total_present || 0,
+            totalLate: basicCounts.total_late || 0,
+            totalAbsent: basicCounts.total_absent || 0,
+            presentPercentage: totalStudents > 0 ? (basicCounts.total_present / totalStudents) * 100 : 0,
+            latePercentage: totalStudents > 0 ? (basicCounts.total_late / totalStudents) * 100 : 0,
+            absentPercentage: totalStudents > 0 ? (basicCounts.total_absent / totalStudents) * 100 : 0
+          };
+        }
 
         console.log('Calculated attendance stats:', stats);
 

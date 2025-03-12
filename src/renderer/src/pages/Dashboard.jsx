@@ -107,21 +107,33 @@ const Dashboard = () => {
       const dayName = format(date, 'EEEE')
       
       if (!acc[dayName]) {
-        acc[dayName] = { P: 0, L: 0, A: 0, total: 0 }
+        acc[dayName] = { 
+          P: 0, 
+          L: 0, 
+          A: 0, 
+          total: stats.totalStudents,
+          uniqueStudents: new Set() // Track unique students for overall stats
+        }
       }
       
-      // Count each status type
-      if (data.status === 'P') acc[dayName].P++
-      else if (data.status === 'L') acc[dayName].L++
-      else if (data.status === 'A') acc[dayName].A++
+      // Count each status type and track unique students
+      if (data.student_id) {
+        acc[dayName].uniqueStudents.add(data.student_id)
+        if (data.status === 'P') acc[dayName].P++
+        else if (data.status === 'L') acc[dayName].L++
+        else if (data.status === 'A') acc[dayName].A++
+      }
       
-      acc[dayName].total++
       return acc
     }, {})
 
     // Fill in the weekData with the grouped data
     Object.entries(groupedByDate).forEach(([day, data]) => {
-      weekData[day] = data
+      const { uniqueStudents, ...rest } = data
+      weekData[day] = {
+        ...rest,
+        total: selectedSection ? stats.totalStudents : uniqueStudents.size // Use unique students count for overall stats
+      }
     })
 
     console.log('Processed week data:', weekData)
